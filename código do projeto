@@ -1,0 +1,364 @@
+
+import sqlite3
+import tkinter as tk
+import tabulate
+from tkinter import *
+from tkinter import messagebox
+import requests
+from bs4 import BeautifulSoup
+import re  # Para trabalhar com regex
+from difflib import get_close_matches
+
+# Conectar ao banco de dados SQLite (WEB CRAWLER)
+conn2 = sqlite3.connect("webcrawler.db")
+cursor2 = conn2.cursor()
+
+# Conectar ao banco de dados SQLite
+conn = sqlite3.connect("jogos.db")
+cursor = conn.cursor()
+
+# Criar bd se não existir
+cursor2.execute("""
+CREATE TABLE IF NOT EXISTS webcrawler (
+    nome TEXT PRIMARY KEY ,
+    preco REAL NOT NULL
+)
+""")
+conn2.commit()
+
+# Criar banco de dados se não existir
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS jogos (
+    nome TEXT PRIMARY KEY ,
+    preco REAL NOT NULL
+)
+""")
+conn.commit()
+
+# URL de uma lista de produtos da Steam
+
+
+
+def coletar_produtos_steam():
+    # Enviando uma requisição GET para o site
+    
+    url = 'https://store.steampowered.com/search/?specials=1'
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
+    }
+    
+    response = requests.get(url, headers=headers)
+
+    conn2 = sqlite3.connect("webcrawler.db")
+    cursor2 = conn2.cursor()
+
+    # Verificando se a requisição foi bem-sucedida
+    if response.status_code == 200:
+        # Fazendo o parsing do HTML da página
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Buscando todos os produtos na página
+        produtos = soup.find_all('a', class_='search_result_row')  # A classe 'search_result_row' contém cada produto
+
+        # Iterando sobre cada produto encontrado
+        for webcrawler in produtos:
+            # Pegando o nome do produto
+            nome = webcrawler.find('span', class_='title').text if webcrawler.find('span', class_='title') else 'Nome não encontrado'
+
+            # Pegando o preço do produto usando regex
+            preco_div = webcrawler.find('div', class_='discount_prices')
+            if preco_div:
+                precos = re.findall(r'R\$\s?\d+,\d+', preco_div.get_text())
+                if len(precos) == 2:  # Caso tenha preço original e com desconto
+                    preco = f"Original: {precos[0]} | Atual: {precos[1]}"
+                elif len(precos) == 1:  # Apenas o preço atual
+                    preco = f"Preço Atual: {precos[0]}"
+                else:
+                    preco = 'Preço não encontrado'
+            else:
+                preco = 'Preço não encontrado'
+
+            # Exibindo o nome e preço
+            print(f'Nome: {nome} | Preço: {preco}')
+
+            # Verificar se o registro já existe
+            cursor2.execute('SELECT COUNT(*) FROM webcrawler WHERE nome = ?', (nome,))
+            if cursor2.fetchone()[0] == 0:
+                # Inserir apenas se não existir
+                cursor2.execute('INSERT INTO webcrawler (nome, preco) VALUES (?, ?)', (nome, preco))
+                conn2.commit()
+
+            else:
+                return messagebox.showinfo("Banco de dados", "O banco de dados já esta atualizado!")
+
+        messagebox.showinfo("Banco de dados Atualizado", "Atualização efetuada com sucesso!")
+                
+                
+
+        # Confirmando transações e fechando o banco de dados
+        conn2.commit()
+        cursor2.close()
+        conn2.close()
+
+        print("Dados armazenados no banco de dados com sucesso!")
+    else:
+        print(f'Erro ao acessar a página: {response.status_code}')
+
+# Função para adicionar no banco de dados os dados extraidos do excel
+def adicionar_excel(arquivo):
+
+    try:
+        with open(arquivo,'r') as file:
+            for row in file:
+                cursor.execute("INSERT INTO jogos VALUES (?,?)", row.split(","))
+                conn.commit()
+            messagebox.showinfo("Sucesso", "Jogos adicionado com sucesso!")
+        listar_jogos()
+    except FileNotFoundError:
+        messagebox.showwarning("Entrada inválida", "Arquivo não encontrado, verifique se o arquivo esta no diretorio correto (C:/Users/Nome)")
+    except Exception as e:
+        messagebox.showwarning("ERROR", "Algo de inesperado deu errado, verifique as possiveis soluções:\n- O arquivo pode estar no diretorio errado\n- O arquivo pode estar com mais colunas do que o suportado (nome,preço)\n- O arquivo pode estar em outro formato, porfavor inserir somente arquivos txt ou csv")
+
+# Função para adicionar um jogo
+def adicionar_jogo():
+    nome = nome_entry.get()
+    preco = preco_entry.get()
+    
+   
+
+    if not nome or not preco:
+        messagebox.showwarning("Entrada inválida", "Por favor, preencha todos os campos.")
+        return
+
+    try:
+        cursor.execute("INSERT INTO jogos (nome,preco) VALUES (?,?)", (nome,preco,))
+        conn.commit()
+        messagebox.showinfo("Sucesso", "Jogo adicionado com sucesso!")
+        nome_entry.delete(0, END)
+        preco_entry.delete(0, END)
+    except sqlite3.IntegrityError:
+        messagebox.showerror("Erro", "Jogo já cadastrado.")
+    listar_jogos()
+
+
+#Função para retirar jogo
+def retirar_jogo():
+    nome = nome_entry.get()
+    
+    if not nome:
+        messagebox.showwarning("Entrada inválida", "Por favor, insira o Nome para consulta.")
+        return
+    
+    cursor.execute("SELECT * FROM jogos WHERE nome = ?", (nome,))
+    jogo = cursor.fetchone()
+    
+    if not jogo:
+        messagebox.showwarning("Entrada inválida", "Nome nao indentificado, porfavor digite novamente")
+        return
+    
+    
+    
+    
+    cursor.execute("delete from jogos where nome = ?", (nome,))
+    conn.commit()
+    messagebox.showinfo("Sucesso", f"'{nome}' removido com sucesso!")
+    return listar_jogos()
+    
+
+
+# Função para consultar o jogo pelo nome
+def consultar_jogo():
+    nome = nome_entry.get()
+
+    if not nome:
+        messagebox.showwarning("Entrada inválida", "Por favor, insira o Nome  para consulta.")
+        return
+
+    cursor.execute("SELECT * FROM jogos WHERE nome = ?", (nome,))
+    jogo = cursor.fetchone()
+    if jogo:
+        messagebox.showinfo("jogo encontrado", f" Nome: {jogo[0]}\n Preço: {jogo[1]}")
+    else:
+        messagebox.showinfo("Jogo não encontrado", "Jogo indisponivel.")
+    nome_entry.delete(0, END)
+
+
+def listarAZ():
+    cursor.execute("SELECT * FROM jogos ORDER BY nome ASC;")
+    listar_jogos()
+
+def listarNumberOrder():
+    cursor.execute("SELECT * FROM jogos ORDER BY preco ASC;")
+    listar_jogos()
+
+
+def comparar_jogos_com_steam():
+    # Buscar todos os jogos do banco local
+    cursor.execute("SELECT nome FROM jogos")
+    jogos_locais = [row[0].lower() for row in cursor.fetchall()]
+    
+
+    # Buscar todos os jogos da tabela de produtos (jogos do Steam)
+    cursor2.execute("SELECT nome FROM webcrawler")
+    jogos_steam = [row[0].lower() for row in cursor2.fetchall()]
+    
+
+    # Comparar similaridades entre os jogos locais e os do Steam
+    jogos_similares = {}
+    for jogo_local in jogos_locais:
+        similares = get_close_matches(jogo_local, jogos_steam, n=3, cutoff=0.6)
+        if similares:
+            jogos_similares[jogo_local] = similares
+
+    # Exibir os resultados
+    if jogos_similares:
+        messagebox.showinfo("entrada efetuada com sucesso", "Jogos similares encontrados!")
+    
+        
+        tabela = tabulate.tabulate(jogos_similares, tablefmt="grid", numalign = "left", stralign = "left", floatfmt = ".2f")
+        lista_text.delete(1.0, END)
+        lista_text.insert(END, "Jogos Disponíveis:\n")
+        lista_text.insert(END, tabela)
+    else:
+        messagebox.showinfo("Nenhuma similaridade", "Nenhuma similaridade encontrada entre os jogos locais e os da Steam.")
+
+
+# Função para listar todos os clientes
+def listar_jogos():
+    jogos = cursor.fetchall()
+    
+    if jogos:
+        headers = ["Nome", "Preço (R$)"]
+        tabela = tabulate.tabulate(jogos, headers=headers, tablefmt="plain", numalign = "left", stralign = "left", floatfmt = ".2f")
+        lista_text.delete(1.0, END)
+        lista_text.insert(END, tabela)
+    
+    else:
+        cursor.execute("SELECT * FROM jogos")
+        confirmar = cursor.fetchall()
+        if confirmar:
+            headers = ["Nome", "Preço (R$)"]
+            tabela = tabulate.tabulate(confirmar, headers=headers, tablefmt="plain", numalign = "left", stralign = "left", floatfmt = ".2f")
+            lista_text.delete(1.0, END)
+            lista_text.insert(END, tabela)
+
+        else:
+            lista_text.delete(1.0,END)
+            lista_text.insert(END, f"Banco de dados Vazio")
+            messagebox.showinfo("Nenhum jogo", "Nenhum jogo registrado no sistema.")
+
+
+
+# Passagem de parametro usando uma função intermediaria 
+def parametro_arquivo():
+    arquivo = arquivo_entry.get()
+    if not arquivo:
+        
+        messagebox.showwarning("Entrada inválida", "insira o nome do arquivo ( verfique se há .txt ou .csv )")
+        return
+    adicionar_excel(arquivo)
+
+
+
+
+# Configuração da interface gráfica
+root = tk.Tk()
+root.title("Registro de Jogos")
+root.geometry("320x666")
+
+# Título
+titulo_label = Label(root, text="Registro de Jogos  ", font=("Helvetica", 16))
+titulo_label.pack(pady=10)
+
+# Campo para nome
+nome_label = Label(root, text="Nome:", anchor="w", width=29)
+nome_label.pack()
+nome_entry = Entry(root, width=33)
+nome_entry.pack()
+
+# Campo para preco
+preco_label = Label(root, text='Preço:', anchor="w", width=29)
+preco_label.pack()
+preco_entry = Entry(root,width=33)
+preco_entry.pack()
+
+# Campo para Selecionar arquivo
+arquivo_label = tk.Label(root, text="Selecionar arquivo:", anchor="w", width=29)
+arquivo_label.pack()
+arquivo_entry = Entry(root, width=33)
+arquivo_entry.pack()
+
+# Texto instrucional (botao selecionar arquivos)
+mensagem_label = tk.Label(root, text="", font=("Arial", 7), fg="blue")
+mensagem_label.pack()
+
+# Botões de ação
+adicionar_button = Button(root, text="Exibir Lançamentos disponiveis", anchor="w", width=28, command=comparar_jogos_com_steam)
+adicionar_button.pack(pady=5)
+
+adicionar_button = Button(root, text="Adicionar Lista de Jogos", anchor="w", width=28, command=parametro_arquivo)
+adicionar_button.pack(pady=5)
+
+atualizar_button = Button(root, text="Buscar Atualizações", anchor="w", width=28, command=coletar_produtos_steam)
+atualizar_button.pack(pady=5)
+
+adicionar_button = Button(root, text="Adicionar Jogo", anchor="w", width=28, command=adicionar_jogo)
+adicionar_button.pack(pady=5)
+
+retirar_button = Button(root, text="Retirar Jogo", anchor="w", width=28, command=retirar_jogo)
+retirar_button.pack(pady=5)
+consultar_button = Button(root, text="Consultar Jogo", anchor="w", width=28, command=consultar_jogo)
+consultar_button.pack(pady=5)
+
+#BOTAO LISTAGEM
+button_frame = Frame(root)
+button_frame.pack(pady=5)
+
+
+listar_button = Button(button_frame, text="Listar jogos disponiveis", anchor="w", width=19, height=1, command=listar_jogos) #Botao listar todos os jogos
+listar_button2 = Button(button_frame, text="Nº", anchor="w", width=2,  height=1, command=listarNumberOrder) # Botao N
+listar_button3 = Button(button_frame, text="A-z", anchor="w", width=3, height=1, command=listarAZ) # Botao A-z
+
+listar_button.pack(side=tk.LEFT, padx=3, pady=10)
+listar_button3.pack(side=tk.LEFT, padx=3, pady=10)
+listar_button2.pack(side=tk.LEFT, padx=3, pady=10)
+
+#variavel global criada para nao dar o bug que apresentava o texto instrucional toda hora de vez em quando
+mouse_sobre = False
+
+def mostrar_mensagem(event):
+    if event.widget == arquivo_entry:
+        global mouse_sobre
+        mouse_sobre = True
+        root.after(150, verificar_e_mostrar_msg)
+        
+        #delay de 150 ms para aparecer o texto informativo
+
+def verificar_e_mostrar_msg():
+    if mouse_sobre:
+        mensagem_label.config(text=f'ATENÇÃO: o arquivo deve estar em \n C:/Users/Nome "Exemplo.csv" -> jogo,preço')
+
+def esconder_mensagem(event):
+    if event.widget == arquivo_entry:
+        global mouse_sobre
+        mouse_sobre = False
+        root.after(50, lambda: mensagem_label.config(text=""))  # Limpa a mensagem
+
+
+# Vincula os eventos apenas ao texto específico
+arquivo_entry.bind("<Enter>", mostrar_mensagem)
+arquivo_entry.bind("<Leave>", esconder_mensagem)
+
+
+
+
+# Área de texto para exibir a lista de clientes
+lista_text = Text(root, height=11, width=30)
+lista_text.pack(padx=5, pady=5)
+
+# Rodar o loop da interface
+root.mainloop()
+
+# Fechar a conexão com o banco de dados ao encerrar
+conn.close()
